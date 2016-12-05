@@ -31,8 +31,15 @@ object MyApp {
   val tret = new Tret { val x = 13 }
   println(tret)
 
+  @deriveFor((x,y) => toString, y => copy)
+  class Clars(x: Int, y: Int)
+
+  val clars = new Clars(13, 14)
+  println(clars)
+  println(clars.copy(y = 0))
+
   @derive(toString, copy)
-  class Clazz(val x: Int, y: Int)
+  class Clazz(x: Int, y: Int)
 
   val clazz = new Clazz(13, 14)
   println(clazz)
