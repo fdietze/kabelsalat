@@ -31,9 +31,10 @@ object MyApp {
   val tret = new Tret { val x = 13 }
   println(tret)
 
-  @derive(toString)
+  @derive(toString, copy)
   class Clazz(val x: Int, y: Int)
 
   val clazz = new Clazz(13, 14)
   println(clazz)
+  println(clazz.copy(y = 0))
 }
