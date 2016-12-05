@@ -1,6 +1,6 @@
 package examples
 
-trait Tret {
+trait Dat {
   def bum(x: Int, i: Int): String
   def bang(i: Int): String
 }
@@ -12,7 +12,7 @@ object MyApp {
   //@mapargs(i => i.toString: Int => String)
   // @mapargs(_.toString: Int => String)
   @mapargs(bla: Int => String)
-  class Ditte extends Tret {
+  class Ditte extends Dat {
     def bum(x: Int, s: String) = s * x
     def bang(s: String) = s + "!"
   }
@@ -21,6 +21,15 @@ object MyApp {
   println(ditte.bang(1))
   println(ditte.bum(3, 12))
 
+  @deriveFor((x,y) => toString)
+  trait Tret {
+    val x: Int
+    val y: Int = 3
+    val z: String = "bla"
+  }
+
+  val tret = new Tret { val x = 13 }
+  println(tret)
 
   @derive(toString)
   class Clazz(val x: Int, y: Int)
