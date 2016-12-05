@@ -21,7 +21,7 @@ object MyApp {
   println(ditte.bang(1))
   println(ditte.bum(3, 12))
 
-  @deriveFor((x,y) => toString)
+  @derive((x,y) => toString)
   trait Tret {
     val x: Int
     val y: Int = 3
@@ -31,17 +31,17 @@ object MyApp {
   val tret = new Tret { val x = 13 }
   println(tret)
 
-  @deriveFor((x,y) => toString, y => copy)
+  @derive((x,y) => toString, y => copy)
   class Clars(x: Int, y: Int)
 
   val clars = new Clars(13, 14)
   println(clars)
   println(clars.copy(y = 0))
 
-  @derive(toString, copy)
+  @derive(toString, x => copy)
   class Clazz(x: Int, y: Int)
 
   val clazz = new Clazz(13, 14)
   println(clazz)
-  println(clazz.copy(y = 0))
+  println(clazz.copy(x = 0))
 }
