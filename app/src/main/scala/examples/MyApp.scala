@@ -20,4 +20,11 @@ object MyApp {
   val ditte = new Ditte
   println(ditte.bang(1))
   println(ditte.bum(3, 12))
+
+
+  @derive(toString)
+  class Clazz(val x: Int, y: Int)
+
+  val clazz = new Clazz(13, 14)
+  println(clazz)
 }
