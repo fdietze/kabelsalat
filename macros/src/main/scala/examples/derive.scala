@@ -10,9 +10,9 @@ case object ValuesFromArgs extends ValueSelection
 case class ValuesByName(names: Seq[String]) extends ValueSelection
 case class MethodConfig(method: String, selection: ValueSelection)
 
-sealed trait ModuleDef { val name: Type.Name; val companion: Option[Defn.Object] }
-case class ClassDef(defn: Defn.Class, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name }
-case class TraitDef(defn: Defn.Trait, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name }
+sealed trait ModuleDef { val name: String }
+case class ClassDef(defn: Defn.Class, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name.value }
+case class TraitDef(defn: Defn.Trait, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name.value }
 
 sealed trait GenMethod
 case class InstanceMethod(method: Defn.Def) extends GenMethod
@@ -39,10 +39,10 @@ object Derive {
     templ.copy(stats = Some(Seq(newStats: _*)))
   }
 
-  def companionWithMethods(module: ModuleDef, methods: Seq[Defn.Def]): Option[Defn.Object] = module.companion.map { comp =>
+  def companionWithMethods(name: Type.Name, companion: Option[Defn.Object], methods: Seq[Defn.Def]): Option[Defn.Object] = companion.map { comp =>
     Some(comp.copy(templ = templWithMethods(comp.templ, methods)))
   }.getOrElse {
-    if (methods.isEmpty) None else Some(q"object ${Term.Name(module.name.value)} { ..$methods }")
+    if (methods.isEmpty) None else Some(q"object ${Term.Name(name.value)} { ..$methods }")
   }
 
   def deriveModule(module: ModuleDef, configs: Seq[MethodConfig]): Stat = {
@@ -50,10 +50,10 @@ object Derive {
     val instanceMethods = methods collect { case InstanceMethod(m) => m }
     val companionMethods = methods collect { case CompanionMethod(m) => m }
     val (defn, companion) = module match {
-      case m@ClassDef(c, comp) =>
-        (c.copy(templ = templWithMethods(c.templ, instanceMethods)), companionWithMethods(m, companionMethods))
-      case m@TraitDef(t, comp) =>
-        (t.copy(templ = templWithMethods(t.templ, instanceMethods)), companionWithMethods(m, companionMethods))
+      case ClassDef(c, comp) =>
+        (c.copy(templ = templWithMethods(c.templ, instanceMethods)), companionWithMethods(c.name, comp, companionMethods))
+      case TraitDef(t, comp) =>
+        (t.copy(templ = templWithMethods(t.templ, instanceMethods)), companionWithMethods(t.name, comp, companionMethods))
     }
 
     companion.map(c => q"$defn; $c").getOrElse(defn)
@@ -78,7 +78,7 @@ object Derive {
   def mapMethod(module: ModuleDef, values: Seq[Value]): PartialFunction[String, GenMethod] = {
     case "toString" =>
       val names = values.map(_.name).toList
-      InstanceMethod(q"override def toString: String = ${module.name.value} + (..$names)")
+      InstanceMethod(q"override def toString: String = ${module.name} + (..$names)")
     case "copy" => module match {
       case ClassDef(c, _) =>
         val params = values.map(v => Term.Param(List.empty, v.name, Some(v.tpe), Some(v.name))).toList
