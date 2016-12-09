@@ -93,7 +93,7 @@ object Derive {
         val names = c.ctor.paramss.map(_.map(v => Term.Name(v.name.value))).toList
         val ctor = Ctor.Name(c.name.value)
         CompanionMethod(q"def apply(..$params) = new $ctor(...$names)")
-      case _ => abort(s"cannot generate method 'copy': type '${module.name}' is not a class")
+      case _ => abort(s"cannot generate method 'apply': type '${module.name}' is not a class")
     }
   }
 }
