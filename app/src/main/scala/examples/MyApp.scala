@@ -31,18 +31,18 @@ object MyApp {
   val tret = new Tret { val x = 13 }
   println(tret)
 
-  @derive((x,y) => toString, y => copy)
+  @derive((x,y) => (toString, apply), y => copy)
   class Clars(x: Int, y: Int)
   object Clars { def apply(x: Int) = new Clars(x, 1) }
 
-  val clars = new Clars(13, 14)
+  val clars = Clars(13, 14)
   println(clars)
   println(clars.copy(y = 0))
 
-  @derive(toString, x => copy)
+  @derive(toString, apply, x => copy)
   class Clazz(x: Int, y: Int)
 
-  val clazz = new Clazz(13, 14)
+  val clazz = Clazz(13, 14)
   println(clazz)
   println(clazz.copy(x = 0))
 }

@@ -10,9 +10,13 @@ case object ValuesFromArgs extends ValueSelection
 case class ValuesByName(names: Seq[String]) extends ValueSelection
 case class MethodConfig(method: String, selection: ValueSelection)
 
-sealed trait ModuleDef { val name: String }
-case class ClassDef(defn: Defn.Class, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name.value }
-case class TraitDef(defn: Defn.Trait, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name.value }
+sealed trait ModuleDef { val name: Type.Name; val companion: Option[Defn.Object] }
+case class ClassDef(defn: Defn.Class, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name }
+case class TraitDef(defn: Defn.Trait, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name }
+
+sealed trait GenMethod
+case class InstanceMethod(method: Defn.Def) extends GenMethod
+case class CompanionMethod(method: Defn.Def) extends GenMethod
 
 object Derive {
   def valuesInTempl(templ: Template) = templ.stats.toSeq.flatten.collect {
@@ -30,21 +34,32 @@ object Derive {
   }
 
   def templWithMethods(templ: Template, methods: Seq[Defn.Def]) = {
+    //TOOD: check for existing...
     val newStats = templ.stats.toSeq.flatten ++ methods
     templ.copy(stats = Some(Seq(newStats: _*)))
   }
 
+  def companionWithMethods(module: ModuleDef, methods: Seq[Defn.Def]): Option[Defn.Object] = module.companion.map { comp =>
+    Some(comp.copy(templ = templWithMethods(comp.templ, methods)))
+  }.getOrElse {
+    if (methods.isEmpty) None else Some(q"object ${Term.Name(module.name.value)} { ..$methods }")
+  }
+
   def deriveModule(module: ModuleDef, configs: Seq[MethodConfig]): Stat = {
     val methods = genMethods(module, configs)
+    val instanceMethods = methods collect { case InstanceMethod(m) => m }
+    val companionMethods = methods collect { case CompanionMethod(m) => m }
     val (defn, companion) = module match {
-      case ClassDef(c, comp) => (c.copy(templ = templWithMethods(c.templ, methods)), comp)
-      case TraitDef(t, comp) => (t.copy(templ = templWithMethods(t.templ, methods)), comp)
+      case m@ClassDef(c, comp) =>
+        (c.copy(templ = templWithMethods(c.templ, instanceMethods)), companionWithMethods(m, companionMethods))
+      case m@TraitDef(t, comp) =>
+        (t.copy(templ = templWithMethods(t.templ, instanceMethods)), companionWithMethods(m, companionMethods))
     }
 
     companion.map(c => q"$defn; $c").getOrElse(defn)
   }
 
-  def genMethods(module: ModuleDef, configs: Seq[MethodConfig]): Seq[Defn.Def] = configs.map { conf =>
+  def genMethods(module: ModuleDef, configs: Seq[MethodConfig]): Seq[GenMethod] = configs.map { conf =>
     val values = selectValues(module, conf.selection)
     mapMethod(module, values).applyOrElse(conf.method, (m: String) => abort(s"unknown derive method: $m"))
   }
@@ -60,16 +75,24 @@ object Derive {
     case (m, ValuesFromArgs) => abort("cannot select arguments from constructor: type '${m.name}' is not a class")
   }
 
-  def mapMethod(module: ModuleDef, values: Seq[Value]): PartialFunction[String, Defn.Def] = {
+  def mapMethod(module: ModuleDef, values: Seq[Value]): PartialFunction[String, GenMethod] = {
     case "toString" =>
       val names = values.map(_.name).toList
-      q"""override def toString: String = ${module.name} + (..$names)"""
+      InstanceMethod(q"override def toString: String = ${module.name.value} + (..$names)")
     case "copy" => module match {
       case ClassDef(c, _) =>
         val params = values.map(v => Term.Param(List.empty, v.name, Some(v.tpe), Some(v.name))).toList
         val names = c.ctor.paramss.map(_.map(v => Term.Name(v.name.value))).toList
         val ctor = Ctor.Name(c.name.value)
-        q"""def copy(..$params) = new $ctor(...$names)"""
+        InstanceMethod(q"def copy(..$params) = new $ctor(...$names)")
+      case _ => abort(s"cannot generate method 'copy': type '${module.name}' is not a class")
+    }
+    case "apply" => module match {
+      case ClassDef(c, _) => //TODO missing args?
+        val params = values.map(v => Term.Param(List.empty, v.name, Some(v.tpe), None)).toList
+        val names = c.ctor.paramss.map(_.map(v => Term.Name(v.name.value))).toList
+        val ctor = Ctor.Name(c.name.value)
+        CompanionMethod(q"def apply(..$params) = new $ctor(...$names)")
       case _ => abort(s"cannot generate method 'copy': type '${module.name}' is not a class")
     }
   }
