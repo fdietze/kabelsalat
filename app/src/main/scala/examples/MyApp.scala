@@ -45,4 +45,12 @@ object MyApp {
   val clazz = Clazz(13, 14)
   println(clazz)
   println(clazz.copy(x = 0))
+
+  case class Root(foo: Foo)
+  case class Foo(bar: Bar)
+  case class Bar(s: String)
+  class X extends ZoomRW[Root] {
+    @gen val handler = zoomRW(_.foo.bar)
+  }
+  //zoomRW(_.foo.bar)((m,v) => m.copy(foo = m.foo.copy(bar = v)))
 }
