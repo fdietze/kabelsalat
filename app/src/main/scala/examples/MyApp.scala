@@ -33,6 +33,7 @@ object MyApp {
 
   @derive((x,y) => toString, y => copy)
   class Clars(x: Int, y: Int)
+  object Clars { def apply(x: Int) = new Clars(x, 1) }
 
   val clars = new Clars(13, 14)
   println(clars)

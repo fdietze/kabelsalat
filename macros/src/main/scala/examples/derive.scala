@@ -1,74 +1,105 @@
 package examples
 
 import scala.meta._
+import scala.collection.immutable.Seq
 
-case class Value(name: String, tpe: Type.Arg)
-case class Method(method: String, values: Seq[Value])
+case class Value(name: Term.Name, tpe: Type.Arg)
+
+sealed trait ValueSelection
+case object ValuesFromArgs extends ValueSelection
+case class ValuesByName(names: Seq[String]) extends ValueSelection
+case class MethodConfig(method: String, selection: ValueSelection)
+
+sealed trait ModuleDef { val name: String }
+case class ClassDef(defn: Defn.Class, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name.value }
+case class TraitDef(defn: Defn.Trait, companion: Option[Defn.Object]) extends ModuleDef { val name = defn.name.value }
 
 object Derive {
-  def valuesInBody(body: Seq[Stat]) = body.collect {
-    case v: Decl.Val => v.pats.map(pat => Value(pat.name.value, v.decltpe))
-    case v: Defn.Val => v.pats.collect { case p: Pat.Var.Term => Value(p.name.value, v.decltpe.get) }
+  def valuesInTempl(templ: Template) = templ.stats.toSeq.flatten.collect {
+    case v: Decl.Val => v.pats.map(pat => Value(pat.name, v.decltpe))
+    case v: Defn.Val => v.pats.collect { case p: Pat.Var.Term => Value(p.name, v.decltpe.get) }
   }.flatten
 
-  def valuesInArgs(args: Seq[Term.Param]) = args.collect {
-    case Term.Param(_, Term.Name(name), Some(tpe), _) => Value(name, tpe)
+  def valuesInCtor(ctor: Ctor.Primary) = ctor.paramss.flatten.collect {
+    case Term.Param(_, Term.Name(name), Some(tpe), _) => Value(Term.Name(name), tpe)
   }
 
-  def genMethods(typeName: String, args: Option[Seq[Value]], defs: Seq[Value], desiredDefs: Seq[(Seq[String], Seq[String])]) = {
-    desiredDefs.flatMap { case (methods, members) =>
-      val allDefs = args.toSeq.flatten ++ defs
-      val values = if (members.isEmpty)
-        args.toSeq.flatten
-      else
-        members.map { member =>
-          allDefs.find(_.name == member) match {
-            case Some(v) => v
-            case None => abort(s"missing value definition for member '$member' in type '$typeName'")
-          }
-        }
-
-      mapMethods(typeName, args, methods.map(m => Method(m, values)))
-    }.toList
+  def valuesInModule(module: ModuleDef) = module match {
+    case ClassDef(c, _) => valuesInTempl(c.templ) ++ valuesInCtor(c.ctor)
+    case TraitDef(t, _) => valuesInTempl(t.templ)
   }
 
-  private def mapMethods(typeName: String, classArgs: Option[Seq[Value]], meths: Seq[Method]): List[Defn.Def] = {
-    meths.map {
-      case Method("toString", values) =>
-        val names = values.map(v => Term.Name(v.name)).toList
-        q"""override def toString: String = $typeName + (..$names)"""
-      case Method("copy", values) =>
-        if (classArgs.isEmpty) abort(s"cannot generate method 'copy', because type '$typeName' has no constructor")
-        val names = classArgs.toSeq.flatten.map(v => Term.Name(v.name)).toList
-        val params = values.map(v => Term.Param(List.empty, Term.Name(v.name), Some(v.tpe), Some(Term.Name(v.name)))).toList
-        val construct = Ctor.Name(typeName)
-        q"""def copy(..$params) = new $construct(..$names)"""
-      case meth => abort(s"unknown method: $meth")
-    }.toList
+  def templWithMethods(templ: Template, methods: Seq[Defn.Def]) = {
+    val newStats = templ.stats.toSeq.flatten ++ methods
+    templ.copy(stats = Some(Seq(newStats: _*)))
+  }
+
+  def deriveModule(module: ModuleDef, configs: Seq[MethodConfig]): Stat = {
+    val methods = genMethods(module, configs)
+    val (defn, companion) = module match {
+      case ClassDef(c, comp) => (c.copy(templ = templWithMethods(c.templ, methods)), comp)
+      case TraitDef(t, comp) => (t.copy(templ = templWithMethods(t.templ, methods)), comp)
+    }
+
+    companion.map(c => q"$defn; $c").getOrElse(defn)
+  }
+
+  def genMethods(module: ModuleDef, configs: Seq[MethodConfig]): Seq[Defn.Def] = configs.map { conf =>
+    val values = selectValues(module, conf.selection)
+    mapMethod(module, values).applyOrElse(conf.method, (m: String) => abort(s"unknown derive method: $m"))
+  }
+
+  def selectValues(module: ModuleDef, selection: ValueSelection): Seq[Value] = (module, selection) match {
+    case (_, ValuesByName(names)) =>
+      val definedVals = valuesInModule(module)
+      names.map(name => definedVals.find(_.name.value == name) match {
+        case Some(v) => v
+        case None => abort(s"missing value definition for member '$name' in type '${module.name}'")
+      })
+    case (ClassDef(c, _), ValuesFromArgs) => valuesInCtor(c.ctor)
+    case (m, ValuesFromArgs) => abort("cannot select arguments from constructor: type '${m.name}' is not a class")
+  }
+
+  def mapMethod(module: ModuleDef, values: Seq[Value]): PartialFunction[String, Defn.Def] = {
+    case "toString" =>
+      val names = values.map(_.name).toList
+      q"""override def toString: String = ${module.name} + (..$names)"""
+    case "copy" => module match {
+      case ClassDef(c, _) =>
+        val params = values.map(v => Term.Param(List.empty, v.name, Some(v.tpe), Some(v.name))).toList
+        val names = c.ctor.paramss.map(_.map(v => Term.Name(v.name.value))).toList
+        val ctor = Ctor.Name(c.name.value)
+        q"""def copy(..$params) = new $ctor(...$names)"""
+      case _ => abort(s"cannot generate method 'copy': type '${module.name}' is not a class")
+    }
   }
 }
 
 class derive extends scala.annotation.StaticAnnotation {
   inline def apply(defn: Any): Any = meta {
-    import Derive._
-
     val Term.New(Template(_, Seq(Term.Apply(_, args)), _, _)) = this
-    val desiredDefs = args map {
+    val configs = args.map {
       case Term.Function(params, names) => (names match {
         case Term.Name(name) => List(name)
-        case Term.Tuple(names) => names.map(_.toString) // TODO: Term.Name
-      }, params.map(_.toString))
-      case Term.Name(name) => (List(name), List.empty)
+        case Term.Tuple(vals) => vals map {
+          case Term.Name(name) => name
+          case arg => abort(s"unexpected argument in tuple: $arg")
+        }
+      }, ValuesByName(params.map(_.toString)))
+      case Term.Name(name) => (List(name), ValuesFromArgs)
       case arg => abort(s"unexpected argument: $arg")
+    } flatMap { case (ms, sel) => ms.map(m => MethodConfig(m, sel)) }
+
+    val module = defn match {
+      case t: Defn.Trait => TraitDef(t, None)
+      case c: Defn.Class => ClassDef(c, None)
+      case d => d.children match {
+        case (t: Defn.Trait) :: (o: Defn.Object) :: Nil => TraitDef(t, Some(o))
+        case (t: Defn.Class) :: (o: Defn.Object) :: Nil => ClassDef(t, Some(o))
+        case _ => abort(s"unexpected annotation: $defn")
+      }
     }
 
-    defn match {
-      case q"..$classMods trait $className extends ..$classParents { ..$body }" =>
-        val derived = genMethods(className.value, None, valuesInBody(body), desiredDefs)
-        q"..$classMods trait $className extends ..$classParents { ..$body; ..$derived }"
-      case q"..$classMods class $className(..$classArgs) extends ..$classParents { ..$body }" =>
-        val derived = genMethods(className.value, Some(valuesInArgs(classArgs)), valuesInBody(body), desiredDefs)
-        q"..$classMods class $className(..$classArgs) extends ..$classParents { ..$body; ..$derived }"
-    }
+    Derive.deriveModule(module, configs)
   }
 }
