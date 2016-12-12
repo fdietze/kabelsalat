@@ -100,7 +100,7 @@ object Derive {
     companion.map { comp =>
       Some(comp.copy(templ = updateTemplate(comp.templ, methods, parents)))
     } getOrElse {
-      if (methods.isEmpty) None else Some(q"object ${Term.Name(name.value)} { ..$methods }")
+      if (methods.isEmpty) None else Some(q"object ${Term.Name(name.value)} extends ..$parents { ..$methods }")
     }
   }
 
