@@ -108,36 +108,38 @@ object PatchDsl {
     def ctor = Ctor.Name(name)
   }
 
-  abstract class MapMethod(f: Generator[ModuleDef], depends: => PatchContainer = PatchGroup()) extends MapPatch(depends) with Method {
-    def apply(module: ModuleDef) = f(module)
+  abstract class MapMethodOn[T <: ModuleDef : ClassTag](f: Generator[T], depends: => PatchContainer = PatchGroup()) extends MapPatch(depends) with Method {
+    def apply(module: ModuleDef) = module match {
+      case t: T => f(t)
+      case t =>
+        val name = implicitly[ClassTag[T]].runtimeClass.getSimpleName
+        Left(s"cannot generate method ${this}: type '${t.name}' is not a $name")
+    }
   }
+
+  abstract class MapMethod(f: Generator[ModuleDef], depends: => PatchContainer = PatchGroup()) extends MapMethodOn[ModuleDef](f, depends)
 
   def select[T <: ModuleDef](selection: ValueSelection)(f: Generator[(T, Seq[Value])]): Generator[T] = t => selection.select(t).right.flatMap(values => f(t, values))
-
-  def on[T <: ModuleDef : ClassTag](f: Generator[T]): Generator[ModuleDef] = t => t match {
-    case o: T => f(o)
-    case _ => Left(s"cannot generate method ???: type '${t.name}' is not a ${implicitly[ClassTag[T]].runtimeClass.getSimpleName}")
-  }
 }
 
 object Patch {
   import PatchDsl._
 
   //TODO: fresh variables everywhere
-  case class Copy(selection: ValueSelection) extends MapMethod(on[ClassDef](select(selection) { case (c, values) =>
+  case class Copy(selection: ValueSelection) extends MapMethodOn[ClassDef](select(selection) { case (c, values) =>
     val params = values.map(v => Term.Param(List.empty, v.name, Some(v.tpe), Some(v.name))).toList
     val names = c.defn.ctor.paramss.map(_.map(v => Term.Name(v.name.value))).toList
     val ctor = Ctor.Name(c.defn.name.value)
     InstanceMethod(q"def copy(..$params) = new $ctor(...$names)")
-  }))
+  })
 
-  case class Apply(selection: ValueSelection) extends MapMethod(on[ClassDef](select(selection) { case (c, values) =>
+  case class Apply(selection: ValueSelection) extends MapMethodOn[ClassDef](select(selection) { case (c, values) =>
     //TODO: missing args?
     val params = values.map(v => Term.Param(List.empty, v.name, Some(v.tpe), None)).toList
     val names = c.defn.ctor.paramss.map(_.map(v => Term.Name(v.name.value))).toList
     val ctor = Ctor.Name(c.defn.name.value)
     CompanionMethod(q"def apply(..$params) = new $ctor(...$names)")
-  }))
+  })
 
   case class ToString(selection: ValueSelection) extends MapMethod(select(selection) { case (m, values) =>
     val names = values.map(_.name).toList
